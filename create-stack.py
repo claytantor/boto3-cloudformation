@@ -110,7 +110,7 @@ def main():
     )
 
     if 'ResponseMetadata' in response and \
-        response['ResponseMetadata']['HTTPStatusCode'] == 200
+        response['ResponseMetadata']['HTTPStatusCode'] == 200:
         print "succeed."
     else:
         print "there was a problem. response:{0}".format(json.dumps(response))

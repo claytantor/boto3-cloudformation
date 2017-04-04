@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--name', type=str, required=True,
                        help='the name of the stack to create.')
     parser.add_argument('--retain', type=str, required=False,
-                       help='the names (comma deliminated) of the reesources to retain.')
+                       help='the names (comma separated) of the resources to retain.')
 
     args = parser.parse_args()
 
@@ -57,7 +57,7 @@ def main():
     )
 
     if 'ResponseMetadata' in response and \
-        response['ResponseMetadata']['HTTPStatusCode'] == 200
+        response['ResponseMetadata']['HTTPStatusCode'] == 200:
         print "succeed."
     else:
         print "there was a problem. response:{0}".format(json.dumps(response))
