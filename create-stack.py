@@ -6,6 +6,7 @@ import json
 import logging
 import argparse
 import boto3
+import botocore
 import urllib2
 import botocore
 import sys
@@ -13,6 +14,13 @@ import time
 import signal
 
 from urlparse import urlparse, parse_qs
+from utils import make_cloudformation_client, load_config, get_log_level
+
+
+LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(funcName) '
+              '-35s %(lineno) -5d: %(message)s')
+
+LOGGER = logging.getLogger(__name__)
 
 # Parameters=[
 #     {
@@ -56,23 +64,8 @@ def get_json(url, data_obj=None):
         print e
         return None
 
-def load_config(config_file):
-    config = {}
-    with open(config_file, 'r') as f:
-        for line in f:
-            line = line.rstrip() #removes trailing whitespace and '\n' chars
-
-            if "=" not in line: continue #skips blanks and comments w/o =
-            if line.startswith("#"): continue #skips comments which contain =
-
-            k, v = line.split("=", 1)
-            config[k] = v.replace("\"","")
-    return config
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True,
-                       help='the config file used for the application.')
     parser.add_argument('--name', type=str, required=True,
                        help='the name of the stack to create.')
     parser.add_argument('--templateurl', type=str, required=True,
@@ -81,40 +74,51 @@ def main():
                        help='the key value pairs for the parameters of the stack.')
     parser.add_argument('--topicarn', type=str, required=True,
                        help='the SNS topic arn for notifications to be sent to.')
+    parser.add_argument('--log', type=str, default="INFO", required=False,
+                       help='which log level. DEBUG, INFO, WARNING, CRITICAL')
     parser.add_argument('--tags', type=str, required=False,
                        help='the tags to attach to the stack.')
+    parser.add_argument('--config', type=str, required=False,
+                       help='the config file used for the application.')
 
     args = parser.parse_args()
 
-    #load the app config
-    config = load_config(args.config)
+    # init LOGGER
+    logging.basicConfig(level=get_log_level(args.log), format=LOG_FORMAT)
 
-    client = boto3.client('cloudformation',
-        config["AWS_REGION_NAME"],
-        aws_access_key_id=config["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=config["AWS_SECRET_ACCESS_KEY"])
+    #load the client using app config or default
+    client = make_cloudformation_client(args.config)
 
-    template_object = get_json(args.templateurl)
+    try:
+        # setup the model
+        template_object = get_json(args.templateurl)
+        params = make_kv_from_args(args.params, "Parameter", False)
+        tags = make_kv_from_args(args.tags)
 
-    params = make_kv_from_args(args.params, "Parameter", False)
-    tags = make_kv_from_args(args.tags)
+        response = client.create_stack(
+            StackName=args.name,
+            TemplateBody=json.dumps(template_object),
+            Parameters=params,
+            DisableRollback=False,
+            TimeoutInMinutes=2,
+            NotificationARNs=[args.topicarn],
+            Tags=tags
+        )
 
-    response = client.create_stack(
-        StackName=args.name,
-        TemplateBody=json.dumps(template_object),
-        Parameters=params,
-        DisableRollback=False,
-        TimeoutInMinutes=2,
-        NotificationARNs=[args.topicarn],
-        Tags=tags
-    )
+        # we expect a response, if its missing on non 200 then show response
+        if 'ResponseMetadata' in response and \
+            response['ResponseMetadata']['HTTPStatusCode'] < 300:
+            logging.info("succeed. response: {0}".format(json.dumps(response)))
+        else:
+            logging.critical("There was an Unexpected error. response: {0}".format(json.dumps(response)))
 
-    if 'ResponseMetadata' in response and \
-        response['ResponseMetadata']['HTTPStatusCode'] == 200:
-        print "succeed."
-    else:
-        print "there was a problem. response:{0}".format(json.dumps(response))
-
+    except ValueError as e:
+        logging.critical("Value error caught: {0}".format(e))
+    except botocore.exceptions.ClientError as e:
+        logging.critical("Boto client error caught: {0}".format(e))
+    except:
+        # catch any failure
+        logging.critical("Unexpected error: {0}".format(sys.exc_info()[0]))
 
 if __name__ == '__main__':
     main()

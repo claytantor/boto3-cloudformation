@@ -13,54 +13,55 @@ import time
 import signal
 
 from urlparse import urlparse, parse_qs
+from utils import make_cloudformation_client, load_config, get_log_level
 
-def load_config(config_file):
-    config = {}
-    with open(config_file, 'r') as f:
-        for line in f:
-            line = line.rstrip() #removes trailing whitespace and '\n' chars
+LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(funcName) '
+              '-35s %(lineno) -5d: %(message)s')
 
-            if "=" not in line: continue #skips blanks and comments w/o =
-            if line.startswith("#"): continue #skips comments which contain =
-
-            k, v = line.split("=", 1)
-            config[k] = v.replace("\"","")
-    return config
+LOGGER = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True,
-                       help='the config file used for the application.')
     parser.add_argument('--name', type=str, required=True,
                        help='the name of the stack to create.')
     parser.add_argument('--retain', type=str, required=False,
                        help='the names (comma separated) of the resources to retain.')
+    parser.add_argument('--log', type=str, default="INFO", required=False,
+                       help='which log level. DEBUG, INFO, WARNING, CRITICAL')
+    parser.add_argument('--config', type=str, required=False,
+                       help='the config file used for the application.')
 
     args = parser.parse_args()
 
-    #load the app config
-    config = load_config(args.config)
+    # init LOGGER
+    logging.basicConfig(level=get_log_level(args.log), format=LOG_FORMAT)
 
-    client = boto3.client('cloudformation',
-        config["AWS_REGION_NAME"],
-        aws_access_key_id=config["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=config["AWS_SECRET_ACCESS_KEY"])
+    #load the client using app config or default
+    client = make_cloudformation_client(args.config)
 
-    retained_resources = []
+    try:
+        retained_resources = []
 
-    if args.retain and len(args.retain)>0:
-        retained_respources = args.retain.split(",")
+        if args.retain and len(args.retain)>0:
+            retained_respources = args.retain.split(",")
 
-    response = client.delete_stack(
-        StackName=args.name,
-        RetainResources=retained_resources
-    )
+        response = client.delete_stack(
+            StackName=args.name,
+            RetainResources=retained_resources
+        )
 
-    if 'ResponseMetadata' in response and \
-        response['ResponseMetadata']['HTTPStatusCode'] == 200:
-        print "succeed."
-    else:
-        print "there was a problem. response:{0}".format(json.dumps(response))
+        # we expect a response, if its missing on non 200 then show response
+        if 'ResponseMetadata' in response and \
+            response['ResponseMetadata']['HTTPStatusCode'] < 300:
+            logging.info("succeed. response: {0}".format(json.dumps(response)))
+        else:
+            logging.critical("There was an Unexpected error. response: {0}".format(json.dumps(response)))
+
+    except ValueError as e:
+        logging.critical("Value error caught: {0}".format(e))
+    except:
+        # catch any failure
+        logging.critical("Unexpected error: {0}".format(sys.exc_info()[0]))
 
 
 if __name__ == '__main__':
